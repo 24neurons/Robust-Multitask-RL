@@ -42,7 +42,7 @@ class GridworldEnv():
         self.current_grid_map = copy.deepcopy(self.start_grid_map)  # current grid map
         self.grid_map_shape = self.start_grid_map.shape
         self.observation_space = spaces.Box(low=np.array([-1.0, -1.0, -1.0 ]) , \
-        									high = np.array([ 1.0, 1.0, 1.0])  )
+        									high = np.array([ 1.0, 1.0, 1.0]), dtype=np.float32 )
 
         # agent state: start, target, current state
         self.agent_start_state, self.agent_target_state = self._get_agent_start_target_state()
