@@ -25,8 +25,11 @@ def trainD(file_name="Distral_1col", list_of_envs=[GridworldEnv(5),
     num_actions = list_of_envs[0].action_space.n
     input_size = list_of_envs[0].observation_space.shape[0]
     num_envs = len(list_of_envs)
+
     policy = PolicyNetwork(input_size, num_actions)
-    models = [DQN(input_size,num_actions) for _ in range(0, num_envs)]   ### Add torch.nn.ModuleList (?)
+    global_memory = ReplayMemory(memory_replay_size * 6, memory_policy_size * 6)
+
+    models = [DQN(input_size,num_actions) for _ in range(0, num_envs)] 
     memories = [ReplayMemory(memory_replay_size, memory_policy_size) for _ in range(0, num_envs)]
 
     use_cuda = torch.cuda.is_available()
@@ -85,7 +88,7 @@ def trainD(file_name="Distral_1col", list_of_envs=[GridworldEnv(5),
 
             # Store the transition in memory
             time = Tensor([current_time[i_env]])
-            memories[i_env].push(states[i_env], action, next_state, reward, time)
+            memories[i_env].push(states[i_env], action, next_state, reward, time, i_env)
 
             # Perform one step of the optimization (on the target network)
             optimize_model(policy, models[i_env], optimizers[i_env],

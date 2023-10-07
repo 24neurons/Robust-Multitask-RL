@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.autograd import Variable
-from memory_replay import Transition
+from memory_replay import Transition, ReplayMemory
 from itertools import count
 from torch.distributions import Categorical
 
@@ -24,7 +24,7 @@ class DQN(nn.Module):
     """
     def __init__(self, num_actions):
         super(DQN, self).__init__()
-        self.conv1 = nn.Conv2d(1, 5, kernel_size=2)
+        self.conv1 = nn.Conv2d(1, 5, kernel_size=2, )
         self.bn1 = nn.BatchNorm2d(5)
         self.conv2 = nn.Conv2d(5, 10, kernel_size=3)
         self.bn2 = nn.BatchNorm2d(10)
@@ -77,14 +77,14 @@ def select_action(state, policy, model, num_actions,
     
     # print("state = ", state)
     # print("forward = ", model(Variable(state, volatile=True)))
-    Q = model(Variable(state, volatile=True).type(FloatTensor))
-    pi0 = policy(Variable(state, volatile=True).type(FloatTensor))
+    Q = model(Variable(state, volatile=True).type(Tensor))
+    pi0 = policy(Variable(state, volatile=True).type(Tensor))
     V = torch.log((torch.pow(pi0, alpha) * torch.exp(beta * Q)).sum(1)) / beta
     # print("pi0 = ", pi0)
     # print(torch.pow(pi0, alpha) * torch.exp(beta * Q))
     # print("V = ", V)
     pi_i = torch.pow(pi0, alpha) * torch.exp(beta * (Q - V))
-    if sum(pi_i.data.numpy()[0] < 0) > 0:
+    if sum(pi_i.data.cpu().numpy()[0] < 0) > 0:
         print("Warning!!!: pi_i has negative values: pi_i", pi_i.data.numpy()[0])
     pi_i = torch.max(torch.zeros_like(pi_i) + 1e-15, pi_i)
     # probabilities = pi_i.data.numpy()[0]
@@ -96,21 +96,21 @@ def select_action(state, policy, model, num_actions,
 
 
 
-        
-
-
 def optimize_policy(policy, optimizer, memories, batch_size,
                     num_envs, gamma):
     loss = 0
     for i_env in range(num_envs):
+
+      # Sample from Memory Buffer
         size_to_sample = np.minimum(batch_size, len(memories[i_env]))
         transitions = memories[i_env].policy_sample(size_to_sample)
+
         batch = Transition(*zip(*transitions))
         
         state_batch = Variable(torch.cat(batch.state))
         # print(batch.action)
         time_batch = Variable(torch.cat(batch.time))
-        actions = np.array([action.numpy()[0][0] for action in batch.action])
+        actions = np.array([action.cpu().numpy()[0][0] for action in batch.action])
         
         cur_loss = (torch.pow(Variable(Tensor([gamma])), time_batch) *
             torch.log(policy(state_batch)[:, actions])).sum()
@@ -174,3 +174,27 @@ def optimize_model(policy, model, optimizer, memory, batch_size,
         param.grad.data.clamp_(-500, 500)
         # print("model:", param.grad.data)
     optimizer.step()
+
+def memoryBufferKMeans(memory):
+    
+    # Sample the whole Memory Buffer
+
+    wholeReplayMemory = ReplayMemory(1000, 1000)
+
+    for env_id in range(len(memory)):
+        
+        for transition in memory[env_id].memory:
+            wholeReplayMemory.memory.append(transition)
+        
+    print(wholeReplayMemory.memory)
+    
+
+    
+    
+
+    # Transpose the batch (see http://stackoverflow.com/a/19343/3343043 for
+    # detailed explanation).
+    # batch = Transition(*zip(*transitions))
+
+
+
