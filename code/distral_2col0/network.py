@@ -37,9 +37,6 @@ class DQN(nn.Module):
         x = F.leaky_relu(self.bn1(self.conv1(x)))
         x = F.leaky_relu(self.bn2(self.conv2(x)))
         x = F.leaky_relu(self.bn3(self.conv3(x)))
-        # x = F.leaky_relu(self.conv1(x))
-        # x = F.leaky_relu(self.conv2(x))
-        # x = F.leaky_relu(self.conv3(x))
         return self.head(x.view(x.size(0), -1))
 
 class PolicyNetwork(nn.Module):
@@ -69,38 +66,29 @@ def select_action(state, policy, model, num_actions,
     """
     Selects whether the next action is choosen by our model or randomly
     """
-    # sample = random.random()
-    # eps_threshold = EPS_END + (EPS_START - EPS_END) * \
-    #     math.exp(-1. * steps_done / EPS_DECAY)
-    # .data.max(1)[1].view(1, 1)
-    # if sample <= eps_threshold:
-    #     return LongTensor([[random.randrange(num_actions)]])
-    
-    # print("state = ", state)
-    # print("forward = ", model(Variable(state, volatile=True)))
     Q = model(Variable(state, volatile=True).type(FloatTensor))
     pi0 = policy(Variable(state, volatile=True).type(FloatTensor))
     V = torch.log((torch.pow(pi0, alpha) * torch.exp(beta * Q)).sum(1)) / beta
-    # print("pi0 = ", pi0)
-    # print(torch.pow(pi0, alpha) * torch.exp(beta * Q))
-    # print("V = ", V)
+
     pi_i = torch.pow(pi0, alpha) * torch.exp(beta * (Q - V))
     if sum(pi_i.data.numpy()[0] < 0) > 0:
         print("Warning!!!: pi_i has negative values: pi_i", pi_i.data.numpy()[0])
     pi_i = torch.max(torch.zeros_like(pi_i) + 1e-15, pi_i)
-    # probabilities = pi_i.data.numpy()[0]
-    # print("pi_i = ", pi_i)
+
     m = Categorical(pi_i)
     action = m.sample().data.view(1, 1)
     return action
-    # numpy.random.choice(numpy.arange(0, num_actions), p=probabilities)
 
+def KMeansCluster(shardExperience, num_agents):
+
+    shardStates = shardExperience.state   # dtype = tuple of Tensors
+    print("Number of experience gathered: ", len(shardStates))
+    print("Shape of each experience: ", shardStates[0].shape)
 
 
 def optimize_policy(policy, optimizer, memories, batch_size,
                     num_envs, gamma, wholeMemory):
     loss = 0
-    wholeMemory = []
 
     for i_env in range(num_envs):
         size_to_sample = np.minimum(batch_size, len(memories[i_env]))
@@ -112,10 +100,12 @@ def optimize_policy(policy, optimizer, memories, batch_size,
                                  (wholeMemory.action + (batch.action,)), \
                                  (wholeMemory.next_state + (batch.next_state,)), \
                                  (wholeMemory.reward + (batch.reward,)),  \
-                                 (wholeMemory.time + (batch.time,))
+                                 (wholeMemory.time + (batch.time,)), \
+                                 (wholeMemory.agent_id + (batch.agent_id,))
                                 )
-        # print(
 
+        if len(wholeMemory.state) % 1000 == 0:
+            print("Performing Cluster")
 
         print("Optimizing policy for env", i_env, "with batch size", size_to_sample)
         print("Batch format" , )
