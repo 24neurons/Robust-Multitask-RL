@@ -6,9 +6,10 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.autograd import Variable
-from memory_replay import Transition, ReplayMemory
+from memory_replay import Transition
 from itertools import count
 from torch.distributions import Categorical
+from network import ReplayMemory
 
 
 use_cuda = torch.cuda.is_available()
@@ -24,7 +25,7 @@ class DQN(nn.Module):
     """
     def __init__(self, num_actions):
         super(DQN, self).__init__()
-        self.conv1 = nn.Conv2d(1, 5, kernel_size=2, )
+        self.conv1 = nn.Conv2d(1, 5, kernel_size=2)
         self.bn1 = nn.BatchNorm2d(5)
         self.conv2 = nn.Conv2d(5, 10, kernel_size=3)
         self.bn2 = nn.BatchNorm2d(10)
@@ -36,9 +37,6 @@ class DQN(nn.Module):
         x = F.leaky_relu(self.bn1(self.conv1(x)))
         x = F.leaky_relu(self.bn2(self.conv2(x)))
         x = F.leaky_relu(self.bn3(self.conv3(x)))
-        # x = F.leaky_relu(self.conv1(x))
-        # x = F.leaky_relu(self.conv2(x))
-        # x = F.leaky_relu(self.conv3(x))
         return self.head(x.view(x.size(0), -1))
 
 class PolicyNetwork(nn.Module):
@@ -68,49 +66,54 @@ def select_action(state, policy, model, num_actions,
     """
     Selects whether the next action is choosen by our model or randomly
     """
-    # sample = random.random()
-    # eps_threshold = EPS_END + (EPS_START - EPS_END) * \
-    #     math.exp(-1. * steps_done / EPS_DECAY)
-    # .data.max(1)[1].view(1, 1)
-    # if sample <= eps_threshold:
-    #     return LongTensor([[random.randrange(num_actions)]])
-    
-    # print("state = ", state)
-    # print("forward = ", model(Variable(state, volatile=True)))
-    Q = model(Variable(state, volatile=True).type(Tensor))
-    pi0 = policy(Variable(state, volatile=True).type(Tensor))
+    Q = model(Variable(state, volatile=True).type(FloatTensor))
+    pi0 = policy(Variable(state, volatile=True).type(FloatTensor))
     V = torch.log((torch.pow(pi0, alpha) * torch.exp(beta * Q)).sum(1)) / beta
-    # print("pi0 = ", pi0)
-    # print(torch.pow(pi0, alpha) * torch.exp(beta * Q))
-    # print("V = ", V)
+
     pi_i = torch.pow(pi0, alpha) * torch.exp(beta * (Q - V))
-    if sum(pi_i.data.cpu().numpy()[0] < 0) > 0:
+    if sum(pi_i.data.numpy()[0] < 0) > 0:
         print("Warning!!!: pi_i has negative values: pi_i", pi_i.data.numpy()[0])
     pi_i = torch.max(torch.zeros_like(pi_i) + 1e-15, pi_i)
-    # probabilities = pi_i.data.numpy()[0]
-    # print("pi_i = ", pi_i)
+
     m = Categorical(pi_i)
     action = m.sample().data.view(1, 1)
     return action
-    # numpy.random.choice(numpy.arange(0, num_actions), p=probabilities)
 
+def KMeansCluster(shardExperience, num_agents):
+
+    shardStates = shardExperience.state   # dtype = tuple of Tensors
+    print("Number of experience gathered: ", len(shardStates))
+    print("Shape of each experience: ", shardStates[0].shape)
 
 
 def optimize_policy(policy, optimizer, memories, batch_size,
-                    num_envs, gamma):
+                    num_envs, gamma, wholeMemory):
     loss = 0
-    for i_env in range(num_envs):
 
-      # Sample from Memory Buffer
+    for i_env in range(num_envs):
         size_to_sample = np.minimum(batch_size, len(memories[i_env]))
         transitions = memories[i_env].policy_sample(size_to_sample)
 
         batch = Transition(*zip(*transitions))
         
+        wholeMemory = Transition((wholeMemory.state + (batch.state,)), \
+                                 (wholeMemory.action + (batch.action,)), \
+                                 (wholeMemory.next_state + (batch.next_state,)), \
+                                 (wholeMemory.reward + (batch.reward,)),  \
+                                 (wholeMemory.time + (batch.time,)), \
+                                 (wholeMemory.agent_id + (batch.agent_id,))
+                                )
+
+        if len(wholeMemory.state) % 1000 == 0:
+            print("Performing Cluster")
+
+        print("Optimizing policy for env", i_env, "with batch size", size_to_sample)
+        print("Batch format" , )
+        wholeMemory.push(batch.state, batch.action, batch.next_state)
         state_batch = Variable(torch.cat(batch.state))
         # print(batch.action)
         time_batch = Variable(torch.cat(batch.time))
-        actions = np.array([action.cpu().numpy()[0][0] for action in batch.action])
+        actions = np.array([action.numpy()[0][0] for action in batch.action])
         
         cur_loss = (torch.pow(Variable(Tensor([gamma])), time_batch) *
             torch.log(policy(state_batch)[:, actions])).sum()
@@ -125,14 +128,22 @@ def optimize_policy(policy, optimizer, memories, batch_size,
         # print("policy:", param.grad.data)
     optimizer.step()
 
+
+
 def optimize_model(policy, model, optimizer, memory, batch_size,
                     alpha, beta, gamma):
     if len(memory) < batch_size:
         return
+
+    # 1. Take batch elements from current agent
     transitions = memory.sample(batch_size)
-    # Transpose the batch (see http://stackoverflow.com/a/19343/3343043 for
-    # detailed explanation).
+
+    # 2. Transpose the batch
     batch = Transition(*zip(*transitions))
+
+    # 3. Only take those that is not ending state
+    # 4. Concate those non next states into non_final_mask
+    # 5. non_final_mask = [0 , 1, 0 , 1, ..., 0]
 
     # Compute a mask of non-final states and concatenate the batch elements
     non_final_mask = ByteTensor(tuple(map(lambda s: s is not None,
@@ -140,6 +151,8 @@ def optimize_model(policy, model, optimizer, memory, batch_size,
     # We don't want to backprop through the expected action values and volatile
     # will save us on temporarily changing the model parameters'
     # requires_grad to False!
+
+    # 6. Concatnate the non final next states based on non_final_mask 
     non_final_next_states = Variable(torch.cat([s for s in batch.next_state
                                                 if s is not None]),
                                      volatile=True)
@@ -148,15 +161,21 @@ def optimize_model(policy, model, optimizer, memory, batch_size,
     action_batch = Variable(torch.cat(batch.action))
     reward_batch = Variable(torch.cat(batch.reward))
 
-    # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
-    # columns of actions taken
-    state_action_values = model(state_batch).gather(1, action_batch)
+    # 7. The model compute 
+    #    Q(s_t) = [for a_i in Actions Q(s_t, a_i)
+    current_sa_values = model(state_batch)
 
-    # Compute V(s_{t+1}) for all next states.
+    # 8. Select the actions taken
+    state_action_values = current_sa_values.gather(1, action_batch)
+
+    # 9. Use global policy to compute V(s_{t+1}) for all next states.
+
     next_state_values = Variable(torch.zeros(batch_size).type(Tensor))
     next_state_values[non_final_mask] = torch.log(
         (torch.pow(policy(non_final_next_states), alpha)
         * torch.exp(beta * model(non_final_next_states))).sum(1)) / beta
+    
+
     # Now, we don't want to mess up the loss with a volatile flag, so let's
     # clear it. After this, we'll just end up with a Variable that has
     # requires_grad=False
@@ -174,27 +193,3 @@ def optimize_model(policy, model, optimizer, memory, batch_size,
         param.grad.data.clamp_(-500, 500)
         # print("model:", param.grad.data)
     optimizer.step()
-
-def memoryBufferKMeans(memory):
-    
-    # Sample the whole Memory Buffer
-
-    wholeReplayMemory = ReplayMemory(1000, 1000)
-
-    for env_id in range(len(memory)):
-        
-        for transition in memory[env_id].memory:
-            wholeReplayMemory.memory.append(transition)
-        
-    print(wholeReplayMemory.memory)
-    
-
-    
-    
-
-    # Transpose the batch (see http://stackoverflow.com/a/19343/3343043 for
-    # detailed explanation).
-    # batch = Transition(*zip(*transitions))
-
-
-
